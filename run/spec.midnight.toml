@@ -1,0 +1,35 @@
+[general]
+jar-source-order = ["direct", "modrinth", "github"] # if value is ommited jar source is ignored.
+port = 25565 # final port, this port will be resolved to root server that is not child of any other (proxy here)
+data-dir = "./data" # . = current executing folder. runtime data
+config-dir = "./config" # cloned into data
+
+[server.proxy]
+type = "velocity"
+version = "3.2.0-SNAPSHOT"
+#data-dir = "./data/proxy" # by default this is $general.data-dir + server name
+#config-dir = "./config/proxy"
+children = ["main"] #for proxies this will dictate what servers are part of this proxy. this will play part in port forwarding and such
+[server.proxy.plugins]
+geyser = "https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/velocity"
+limboreconnect = "1.1.1"
+luckperms = "https://download.luckperms.net/1517/velocity/LuckPerms-Velocity-5.4.104.jar"
+"SkinsRestorer/SkinsRestorerX" = "14.2.12"
+VCustomBrand = "1.0.0"
+limboapi = "1.1.13"
+limboauth = "1.1.13"
+minimotd = "2.0.13"
+velocity-redis-whitelist = "1.0.1"
+
+[server.main]
+type = "fabric"
+version = "0.14.23:1.20.1" # fabric:minecraft
+[server.main.mods]
+# pretend there is many mods
+# btw, to download from github releases, use this:
+#'Elytrium/LimboAPI' = "1.1.16" # since modrinth slugs dont contain slashes this notation works wonders
+# or
+#'Elytrium/LimboAPI' = "1.1.16/limboapi-1.1.16.jar" # here we specify the exact file to use. midnight will work without it by resolving first jar, which may or may not work.
+[server.main.properties]
+# this will overlay default server properties
+online-mode=false
