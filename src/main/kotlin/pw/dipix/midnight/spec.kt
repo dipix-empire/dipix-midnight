@@ -5,13 +5,19 @@ import com.fasterxml.jackson.annotation.JsonProperty
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import com.github.ajalt.mordant.rendering.TextStyles.bold
 import io.ktor.client.call.*
 import io.ktor.client.request.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
-import kotlinx.coroutines.*
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.net.MalformedURLException
 import java.net.URL
+import java.util.*
+
+val defaultServerProperies =
+    Properties().apply { load(MidnightSpecification::class.java.getResourceAsStream("/server.properties")) }
 
 data class MidnightSpecification(
     val general: MidnightSpecificationGeneralConf,
@@ -30,6 +36,10 @@ data class MidnightSpecification(
         servers.map { it.key to it.value.toItzgService(yamlMapper) }.forEach { services.replace(it.first, it.second) }
         return root
     }
+
+//    suspend fun downloadJars(): Map<String, File> {
+//        return servers.map { it.value.downloadJars() }.fold(mapOf()) { acc, map -> acc + (map ?: mapOf()) }
+//    }
 }
 
 data class MidnightSpecificationGeneralConf(
@@ -60,9 +70,11 @@ class MidnightSpecificationServer(
 ) {
     val dataDir: File? = dataDir ?: this.specification?.general?.dataDir?.resolve("$name")
     val configDir: File? = configDir ?: this.specification?.general?.configDir?.resolve("$name")
-    val isProxy: Boolean get() = listOf("velocity", "waterfall", "bungeecord").contains(type)
+    val isProxy: Boolean get() = listOf("velocity", "waterfall", "bungeecord").contains(type) // TODO: add all supported
     val isModded: Boolean get() = listOf("fabric", "forge").contains(type) // TODO: add all supported
-    val isPluginModded: Boolean get() = listOf("spigot", "paper").contains(type) || isProxy // TODO: add all supported
+    val isPluginServer: Boolean get() = listOf("spigot", "paper").contains(type) // TODO: add all supported
+    val isPluginModded: Boolean get() = isPluginServer || isProxy
+    val defaultPort get() = if(type == "velocity") 25575 else 25565
     val parent: MidnightSpecificationServer?
         get() = specification?.servers?.values?.firstOrNull {
             it.children?.contains(
@@ -83,7 +95,7 @@ class MidnightSpecificationServer(
         service.put("image", "itzg/minecraft-server")
         service.put("tty", true)
         service.put("stdin_open", true)
-        if (parent == null) service.putArray("ports").add("${specification!!.general.port}:25565")
+        if (parent == null) service.putArray("ports").add("${specification!!.general.port}:$defaultPort")
         service.putArray("volumes").add("$dataDir:/data")
         val env = service.putObject("environment")
         env.put("EULA", "TRUE")
@@ -105,7 +117,7 @@ class MidnightSpecificationServer(
         service.put("image", "itzg/bungeecord") // don't be fooled - it supports velocity
         service.put("tty", true)
         service.put("stdin_open", true)
-        if (parent == null) service.putArray("ports").add("${specification!!.general.port}:25565")
+        if (parent == null) service.putArray("ports").add("${specification!!.general.port}:$defaultPort")
         service.putArray("volumes").add("$dataDir:/data")
         val env = service.putObject("environment")
 //        env.put("EULA", "TRUE")
@@ -137,6 +149,28 @@ class MidnightSpecificationServer(
         specification,
         name
     )
+
+    suspend fun downloadJars(): Map<String, File>? {
+        terminal.println((bold + minecraftCyan)("Server $name:"))
+        val jars = if (this.isModded) this.mods else if (this.isPluginModded) this.plugins else null
+        val folder =
+            (if (this.isModded) "mods" else if (this.isPluginModded) "plugins" else null)?.let { File(it) }
+        val parsedJars = jars?.mapValues {
+            MidnightJarSource.parseAndGetJar(it.key, it.value, this)
+                ?: throw RuntimeException("${it.key} did not resolve.")
+        }
+        val tasks = parsedJars?.map {
+            Downloadable.of(it.value.second).toTask(folder!!.resolve("${it.value.first}.jar")) { finished, total ->
+                if (finished == total) terminal.println((bold + minecraftGreen)("Downloaded ${it.value.first}.jar"))
+            }
+        }
+//            println("Tasks: $tasks")
+        runBlocking { tasks?.downloadAll() }
+        if (tasks?.isEmpty() == true) {
+            terminal.println((bold + minecraftGreen)("No tasks defined."))
+        }
+        return parsedJars?.mapValues { folder!!.resolve("${it.value.first}.jar") }
+    }
 }
 
 interface MidnightJarSource {
@@ -156,7 +190,13 @@ interface MidnightJarSource {
     ): Boolean = false
 
     companion object : MidnightJarSource {
-        val sources = mutableMapOf("modrinth" to ModrinthApi, "github" to GithubApi, "direct" to DirectURLJarSource)
+        val sources = mutableMapOf(
+            "modrinth" to ModrinthApi,
+            "github" to GithubApi,
+            "direct" to DirectURLJarSource,
+            "local" to LocalJarSource
+        )
+
         fun parseAndGetJar(key: String, value: String, server: MidnightSpecificationServer): Pair<String, URL>? =
             resolve(key, server, value)
 
@@ -171,35 +211,6 @@ interface MidnightJarSource {
             server: MidnightSpecificationServer,
             modVersion: String
         ): Pair<String, URL>? {
-//            val githubUserRegex = Regex("""^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$""", RegexOption.IGNORE_CASE)
-//            val githubRepoRegex = Regex("""^[a-z\d-_.]+$""", RegexOption.IGNORE_CASE)
-//            val githubModName = Regex("""^(?<user>.*)/(?<repo>.*)$""", RegexOption.IGNORE_CASE)
-//            val modrinthSlugRegex = Regex("""^[\w!@$()`.+,"\-']{3,64}$""", RegexOption.IGNORE_CASE)
-//            when {
-//                try {
-//                    URL(modVersion); true
-//                } catch (e: MalformedURLException) {
-//                    false
-//                } -> URL(modVersion)
-//
-//                name.matches(githubModName) && githubModName.matchEntire(name)?.groups?.get("user")?.value?.matches(
-//                    githubUserRegex
-//                ) == true && githubModName.matchEntire(name)?.groups?.get("repo")?.value?.matches(githubRepoRegex) == true -> {
-//                    val (user, repo) = githubModName.matchEntire(name)?.groups?.run {
-//                        arrayOf(
-//                            get("user")?.value!!,
-//                            get("repo")?.value!!
-//                        )
-//                    }!!
-//                    null
-//                }
-//
-//                name.matches(modrinthSlugRegex) -> {
-//                    ModrinthApi.resolveToDownload(name, softwareType, minecraftVersion, modVersion)
-//                }
-//
-//                else -> TODO("Implement download for: $name = $modVersion")
-//            }
             val download = server.specification!!.general.jarSourceOrder.map { sources[it] }
                 .firstOrNull { it?.supportsDownload(name, server, modVersion) == true }
                 ?.resolve(name, server, modVersion)
@@ -221,9 +232,7 @@ object ModrinthApi : MidnightJarSource {
         val compatibleVersions =
             runBlocking {
                 val response =
-                    httpClient.get(apiUrl("/project/$name/version?loaders=[%22${server.type}%22]${server.minecraftVersion?.let { "&game_versions=[%22$it%22]" } ?: ""}")) {
-                        accept(ContentType.Application.Json)
-                    }
+                    httpClient.get(apiUrl("/project/$name/version?loaders=[%22${server.type}%22]${server.minecraftVersion?.let { "&game_versions=[%22$it%22]" } ?: ""}"))
                 try {
                     response.body<ArrayNode>()
                 } catch (e: Throwable) {
@@ -250,8 +259,8 @@ object ModrinthApi : MidnightJarSource {
 object GithubApi : MidnightJarSource {
     val githubUserRegex = Regex("""^[a-z\d](?:[a-z\d]|-(?=[a-z\d])){0,38}$""", RegexOption.IGNORE_CASE)
     val githubRepoRegex = Regex("""^[a-z\d-_.]+$""", RegexOption.IGNORE_CASE)
-    val githubModName = Regex("""^(?<user>.*)/(?<repo>.*)$""", RegexOption.IGNORE_CASE)
-    val githubTagAndFile = Regex("""^(?<tag>.*)(/(?<file>.*))?$""", RegexOption.IGNORE_CASE)
+    val githubModName = Regex("""^(?<user>[^/]*)/(?<repo>.*)$""", RegexOption.IGNORE_CASE)
+    val githubTagAndFile = Regex("""^(?<tag>[^/]*)(/(?<file>.*))?${'$'}""", RegexOption.IGNORE_CASE)
     val endpoint = "https://api.github.com"
 
     fun apiUrl(string: String) = URL("$endpoint$string")
@@ -264,15 +273,17 @@ object GithubApi : MidnightJarSource {
         val repoName = githubModName.matchEntire(name)?.groups?.get("repo")?.value!!
         val tag = githubTagAndFile.matchEntire(modVersion)?.groups?.get("tag")?.value!!
         val file = githubTagAndFile.matchEntire(modVersion)?.groups?.get("file")?.value
-        val assetsUrl = runBlocking {
-            httpClient.get(apiUrl(if (tag == "*") "/repos/$user/$repoName/releases/latest" else "/repos/$user/$repoName/releases/tags/$modVersion")) {
-                accept(ContentType.Application.Json)
-            }.body<ObjectNode>()["assets_url"].asText()
-        }
+        val assetsUrl = try {
+            runBlocking {
+                httpClient.get(apiUrl(if (tag == "*") "/repos/$user/$repoName/releases/latest" else "/repos/$user/$repoName/releases/tags/$tag")).apply{bodyAsText().run { println(this) }}
+                    .body<ObjectNode>()["assets_url"].asText()
+            }
+        } catch (e: Throwable) {
+            println("GithubApi: ${e.message}")
+            null
+        } ?: return null;
         val assets = runBlocking {
-            httpClient.get(URL(assetsUrl)) {
-                accept(ContentType.Application.Json)
-            }.body<ArrayNode>()
+            httpClient.get(URL(assetsUrl)).body<ArrayNode>()
         }
         return repoName to URL(assets.firstOrNull {
             it["name"].asText()
@@ -309,3 +320,15 @@ object DirectURLJarSource : MidnightJarSource {
     }
 }
 
+object LocalJarSource : MidnightJarSource {
+    override fun resolve(name: String, server: MidnightSpecificationServer, modVersion: String): Pair<String, URL>? {
+        terminal.println((minecraftYellow + bold)("Local file resolved for $name (${File(modVersion).absolutePath}). Note that local files break the principle of minimal config, and you should try to find a better way to do this."))
+        return if (File(modVersion).exists()) name to File(modVersion).toURI().toURL() else null
+    }
+
+    override fun supportsDownload(name: String, server: MidnightSpecificationServer, modVersion: String): Boolean {
+//        terminal.println((minecraftYellow + bold)(modVersion))
+//        terminal.println((minecraftYellow + bold)(File(modVersion).absolutePath))
+        return File(modVersion).exists()
+    }
+}

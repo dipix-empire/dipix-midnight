@@ -1,12 +1,15 @@
 package pw.dipix.midnight
 
+import com.fasterxml.jackson.core.json.JsonWriteFeature
 import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.dataformat.toml.TomlMapper
+import com.fasterxml.jackson.dataformat.toml.TomlReadFeature
+import com.fasterxml.jackson.dataformat.toml.TomlWriteFeature
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper
 import com.fasterxml.jackson.module.kotlin.KotlinFeature
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.github.ajalt.mordant.animation.ProgressAnimation
 import com.github.ajalt.mordant.rendering.TextStyles.bold
 import com.github.ajalt.mordant.terminal.Terminal
 import io.ktor.client.*
@@ -19,6 +22,7 @@ import picocli.CommandLine
 import picocli.CommandLine.Command
 import picocli.CommandLine.Option
 import java.io.File
+import java.util.*
 import kotlin.system.exitProcess
 
 val jacksonKotlinModule = KotlinModule.Builder()
@@ -40,7 +44,9 @@ val httpClient = HttpClient(CIO) {
     install(UserAgent) {
         agent = "dipix-empire/dipix-midnight/SNAPSHOT (k.krasilnikov.2008@gmail.com)"
     }
-    install(HttpTimeout)
+    install(HttpTimeout) {
+        connectTimeoutMillis = 60*1000
+    }
     install(ContentNegotiation) {
         jackson()
     }
@@ -51,7 +57,9 @@ val downloadHttpClient = HttpClient(CIO) {
     install(UserAgent) {
         agent = "dipix-empire/dipix-midnight/SNAPSHOT (k.krasilnikov.2008@gmail.com)"
     }
-    install(HttpTimeout)
+    install(HttpTimeout) {
+        connectTimeoutMillis = 60*1000
+    }
     followRedirects = true
 }
 
@@ -88,23 +96,78 @@ object MidnightBuildCommand : Runnable {
         terminal.println((bold + minecraftGreen)("Specification parsed."))
         terminal.println("Detected servers: ${spec.servers.keys.joinToString()}")
         terminal.println("Root server: ${spec.rootServer!!.name!!}")
+        spec.general.dataDir.mkdirs()
+        spec.general.configDir.mkdirs()
         terminal.println((bold + minecraftCyan)("Assembling docker-compose.yml..."))
         File("docker-compose.yml").writeText(yamlMapper.writeValueAsString(spec.buildDockerCompose()))
         terminal.println((bold + minecraftGreen)("Docker Compose configuration generated."))
         terminal.println((bold + minecraftCyan)("Downloading jars..."))
-        spec.servers.forEach { name, server ->
-            terminal.println("Server $name:")
-            val jars = if (server.isModded) server.mods else if (server.isPluginModded) server.plugins else null
-            val folder =
-                (if (server.isModded) "mods" else if (server.isPluginModded) "plugins" else null)?.let { File(it) }
-            val tasks = jars?.mapValues {
-                MidnightJarSource.parseAndGetJar(it.key, it.value, server)
-                    ?: throw RuntimeException("${it.key} did not resolve.")
-            }?.map { URLDownloadable(it.value.second).toTask(folder!!.resolve("${it.value.first}.jar")) }
-            println("Tasks: $tasks")
-            runBlocking { tasks?.downloadAll() }
+        val downloadedJars = runBlocking { spec.servers.mapValues { it.value.downloadJars() ?: mapOf() } }
+        terminal.println((bold + minecraftGreen)("Jars downloaded."))
+        terminal.println((bold + minecraftCyan)("Applying jars..."))
+        spec.servers.forEach { (_, server) ->
+            if (server.isPluginModded) {
+                downloadedJars[server.name]!!.values.forEach { pluginFile ->
+                    pluginFile.copyTo(
+                        server.dataDir!!.resolve("plugins").apply { mkdirs() }.resolve(pluginFile.name),
+                        overwrite = true
+                    )
+                }
+            } else if (server.isModded) {
+                downloadedJars[server.name]!!.values.forEach { modFile ->
+                    modFile.copyTo(
+                        server.dataDir!!.resolve("mods").apply { mkdirs() }.resolve(modFile.name),
+                        overwrite = true
+                    )
+                }
+            }
+        }
+        terminal.println((bold + minecraftGreen)("Jars applied."))
+        terminal.println((bold + minecraftCyan)("Applying configs..."))
+        spec.servers.forEach { (_, server) ->
+            server.configDir?.apply { mkdirs() }?.listFiles()?.map { it.relativeTo(server.configDir) }?.forEach {
+                if (server.type == "velocity" && (it.name == "velocity.toml" || it.name == "forwarding.secret")) { // todo: add support for overlays
+                    server.dataDir!!.apply { mkdirs() }.resolve(it)
+                        .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
+                } else if (server.isPluginModded) {
+                    server.dataDir!!.resolve("plugins").apply { mkdirs() }.resolve(it)
+                        .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
+                } else if (server.isModded) {
+                    // FIXME: where forge keeps them?
+                    server.dataDir!!.resolve("config").apply { mkdirs() }.resolve(it)
+                        .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
+                }
+            }
+        }
+        terminal.println((bold + minecraftGreen)("Configs applied!"))
+        terminal.println((bold + minecraftCyan)("Applying server.properties..."))
+        spec.servers.forEach { (_, server) ->
+            if (!server.isProxy) {
+                val properties = Properties().apply { putAll(defaultServerProperies) }
+                server.properties?.fields()?.forEach { (key, value) -> properties[key] = value.asText() }
+                if (server.parent != null) properties["online-mode"] = "false"
+                properties.store(server.dataDir!!.apply { mkdirs() }!!.resolve("server.properties").outputStream(), "")
+            }
+        }
+        terminal.println((bold + minecraftGreen)("Properties applied!"))
+        terminal.println((bold + minecraftCyan)("Configuring Velocity...")) // todo: support other proxies
+        spec.servers.filter { it.value.type == "velocity" }.forEach { (_, server) ->
+            val velocityToml: ObjectNode = server.dataDir!!.resolve("velocity.toml").run {
+                if (!exists()) {
+                    createNewFile()
+                    tomlMapper.createObjectNode()
+                } else tomlMapper.readValue(this)
+            }
+            val velocityServers: ObjectNode = velocityToml.putObject("servers")
+            val otherServers = spec.servers.filter { !it.value.isProxy }
+            server.children!!.map(otherServers::get).requireNoNulls()
+                .forEach { velocityServers.put(it.name!!, "${it.name}:${it.defaultPort}") }
+            velocityServers.putArray("try").run {
+                server.children.map(otherServers::get).requireNoNulls().map(MidnightSpecificationServer::name)
+                    .forEach { add(it) }
+            }
+            tomlMapper.writeValue(server.dataDir.resolve("velocity.toml"), velocityToml)
         }
     }
 
 }
-
