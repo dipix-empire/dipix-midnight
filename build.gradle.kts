@@ -5,7 +5,9 @@ plugins {
     application
 }
 
+@Suppress("PropertyName")
 val jackson_version: String by project
+@Suppress("PropertyName")
 val ktor_version: String by project
 
 group = "pw.dipix.midnight"

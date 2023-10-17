@@ -9,7 +9,6 @@ import com.github.ajalt.mordant.rendering.TextStyles.bold
 import io.ktor.client.call.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
-import io.ktor.http.*
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.net.MalformedURLException
@@ -30,10 +29,10 @@ data class MidnightSpecification(
 
     fun buildDockerCompose(): ObjectNode {
         if (!resolved) throw IllegalStateException("Cannot build docker compose file from unresolved spec.")
-        val root = yamlMapper.createObjectNode()
+        val root = jacksonYamlMapper.createObjectNode()
         root.put("version", "3.8")
         val services = root.putObject("services")
-        servers.map { it.key to it.value.toItzgService(yamlMapper) }.forEach { services.replace(it.first, it.second) }
+        servers.map { it.key to it.value.toItzgService(jacksonYamlMapper) }.forEach { services.replace(it.first, it.second) }
         return root
     }
 
@@ -211,19 +210,19 @@ interface MidnightJarSource {
             server: MidnightSpecificationServer,
             modVersion: String
         ): Pair<String, URL>? {
-            val download = server.specification!!.general.jarSourceOrder.map { sources[it] }
+            terminal.println((minecraftLightPurple + bold)("Resolving $name..."))
+            return server.specification!!.general.jarSourceOrder.map { sources[it] }
                 .firstOrNull { it?.supportsDownload(name, server, modVersion) == true }
                 ?.resolve(name, server, modVersion)
-            return download
         }
     }
 }
 
 object ModrinthApi : MidnightJarSource {
-    val endpoint = "https://api.modrinth.com"
-    val version = "v2"
+    const val ENDPOINT = "https://api.modrinth.com"
+    const val VERSION = "v2"
 
-    fun apiUrl(string: String) = URL("$endpoint/$version$string")
+    fun apiUrl(string: String) = URL("$ENDPOINT/$VERSION$string")
     override fun resolve(
         name: String,
         server: MidnightSpecificationServer,
@@ -242,8 +241,7 @@ object ModrinthApi : MidnightJarSource {
             }
 //        println(compatibleVersions?.toPrettyString())
         return compatibleVersions?.firstOrNull { if (modVersion == "*") true else (it["version_number"].asText() == modVersion) }
-            ?.get("files")
-            ?.first { it["primary"].asBoolean() }?.get("url")?.asText()?.let { URL(it) }?.let { name to it }
+            ?.get("files")?.maxByOrNull { it["primary"].asBoolean() }?.get("url")?.asText()?.let { URL(it) }?.let { name to it }
     }
 
     override fun supportsDownload(
@@ -261,9 +259,9 @@ object GithubApi : MidnightJarSource {
     val githubRepoRegex = Regex("""^[a-z\d-_.]+$""", RegexOption.IGNORE_CASE)
     val githubModName = Regex("""^(?<user>[^/]*)/(?<repo>.*)$""", RegexOption.IGNORE_CASE)
     val githubTagAndFile = Regex("""^(?<tag>[^/]*)(/(?<file>.*))?${'$'}""", RegexOption.IGNORE_CASE)
-    val endpoint = "https://api.github.com"
+    const val ENDPOINT = "https://api.github.com"
 
-    fun apiUrl(string: String) = URL("$endpoint$string")
+    fun apiUrl(string: String) = URL("$ENDPOINT$string")
     override fun resolve(
         name: String,
         server: MidnightSpecificationServer,
@@ -281,7 +279,7 @@ object GithubApi : MidnightJarSource {
         } catch (e: Throwable) {
             println("GithubApi: ${e.message}")
             null
-        } ?: return null;
+        } ?: return null
         val assets = runBlocking {
             httpClient.get(URL(assetsUrl)).body<ArrayNode>()
         }
@@ -307,7 +305,7 @@ object DirectURLJarSource : MidnightJarSource {
         name: String,
         server: MidnightSpecificationServer,
         modVersion: String
-    ): Pair<String, URL>? = name to URL(modVersion)
+    ): Pair<String, URL> = name to URL(modVersion)
 
     override fun supportsDownload(
         name: String,

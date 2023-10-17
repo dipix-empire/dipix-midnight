@@ -2,6 +2,8 @@ package pw.dipix.midnight
 
 
 // some dockerfile building shenanigans. i remembered minecraft docker containers were made already so why bother
+@Suppress("unused")
+@Deprecated("i remembered minecraft docker containers were made already so why bother")
 class DockerfileBuilder {
     private val stringBuilder = StringBuilder()
 

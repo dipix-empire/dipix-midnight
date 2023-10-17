@@ -1,11 +1,5 @@
 package pw.dipix.midnight
 
-import com.github.ajalt.mordant.animation.animation
-import com.github.ajalt.mordant.animation.progressAnimation
-import com.github.ajalt.mordant.table.verticalLayout
-import com.github.ajalt.mordant.widgets.EmptyWidget
-import com.github.ajalt.mordant.widgets.Text
-import com.github.ajalt.mordant.widgets.progressLayout
 import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -16,9 +10,6 @@ import kotlinx.coroutines.*
 import java.io.File
 import java.net.URL
 import java.nio.file.Files
-import java.time.Instant
-import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 import kotlin.time.DurationUnit
 import kotlin.time.toDuration
 
