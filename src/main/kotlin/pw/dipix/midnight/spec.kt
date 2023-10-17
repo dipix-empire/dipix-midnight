@@ -32,7 +32,8 @@ data class MidnightSpecification(
         val root = jacksonYamlMapper.createObjectNode()
         root.put("version", "3.8")
         val services = root.putObject("services")
-        servers.map { it.key to it.value.toItzgService(jacksonYamlMapper) }.forEach { services.replace(it.first, it.second) }
+        servers.map { it.key to it.value.toItzgService(jacksonYamlMapper) }
+            .forEach { services.replace(it.first, it.second) }
         return root
     }
 
@@ -49,6 +50,8 @@ data class MidnightSpecificationGeneralConf(
     val dataDir: File,
     @JsonProperty("config-dir")
     val configDir: File,
+    @JsonProperty("overlay-dir")
+    val overlayDir: File,
 )
 
 class MidnightSpecificationServer(
@@ -62,6 +65,8 @@ class MidnightSpecificationServer(
     dataDir: File? = null,
     @JsonProperty("config-dir")
     configDir: File? = null,
+    @JsonProperty("overlay-dir")
+    overlayDir: File? = null,
     @JsonIgnore
     val specification: MidnightSpecification? = null,
     @JsonIgnore
@@ -69,11 +74,12 @@ class MidnightSpecificationServer(
 ) {
     val dataDir: File? = dataDir ?: this.specification?.general?.dataDir?.resolve("$name")
     val configDir: File? = configDir ?: this.specification?.general?.configDir?.resolve("$name")
+    val overlayDir: File? = overlayDir ?: this.specification?.general?.overlayDir?.resolve("$name")
     val isProxy: Boolean get() = listOf("velocity", "waterfall", "bungeecord").contains(type) // TODO: add all supported
     val isModded: Boolean get() = listOf("fabric", "forge").contains(type) // TODO: add all supported
     val isPluginServer: Boolean get() = listOf("spigot", "paper").contains(type) // TODO: add all supported
     val isPluginModded: Boolean get() = isPluginServer || isProxy
-    val defaultPort get() = if(type == "velocity") 25575 else 25565
+    val defaultPort get() = if (type == "velocity") 25577 else 25565
     val parent: MidnightSpecificationServer?
         get() = specification?.servers?.values?.firstOrNull {
             it.children?.contains(
@@ -134,6 +140,7 @@ class MidnightSpecificationServer(
         properties: ObjectNode? = this.properties,
         dataDir: File? = this.dataDir,
         configDir: File? = this.configDir,
+        overlayDir: File? = this.overlayDir,
         specification: MidnightSpecification? = this.specification,
         name: String? = this.name,
     ) = MidnightSpecificationServer(
@@ -145,6 +152,7 @@ class MidnightSpecificationServer(
         properties,
         dataDir,
         configDir,
+        overlayDir,
         specification,
         name
     )
@@ -241,7 +249,8 @@ object ModrinthApi : MidnightJarSource {
             }
 //        println(compatibleVersions?.toPrettyString())
         return compatibleVersions?.firstOrNull { if (modVersion == "*") true else (it["version_number"].asText() == modVersion) }
-            ?.get("files")?.maxByOrNull { it["primary"].asBoolean() }?.get("url")?.asText()?.let { URL(it) }?.let { name to it }
+            ?.get("files")?.maxByOrNull { it["primary"].asBoolean() }?.get("url")?.asText()?.let { URL(it) }
+            ?.let { name to it }
     }
 
     override fun supportsDownload(
@@ -267,13 +276,17 @@ object GithubApi : MidnightJarSource {
         server: MidnightSpecificationServer,
         modVersion: String
     ): Pair<String, URL>? {
+        val githubToken = tokens.getProperty("github")
         val user = githubModName.matchEntire(name)?.groups?.get("user")?.value!!
         val repoName = githubModName.matchEntire(name)?.groups?.get("repo")?.value!!
         val tag = githubTagAndFile.matchEntire(modVersion)?.groups?.get("tag")?.value!!
         val file = githubTagAndFile.matchEntire(modVersion)?.groups?.get("file")?.value
         val assetsUrl = try {
             runBlocking {
-                httpClient.get(apiUrl(if (tag == "*") "/repos/$user/$repoName/releases/latest" else "/repos/$user/$repoName/releases/tags/$tag")).apply{bodyAsText().run { println(this) }}
+                httpClient.get(apiUrl(if (tag == "*") "/repos/$user/$repoName/releases/latest" else "/repos/$user/$repoName/releases/tags/$tag")) {
+                    if (githubToken != null) bearerAuth(githubToken)
+                }
+                    .apply { bodyAsText().run { println(this) } }
                     .body<ObjectNode>()["assets_url"].asText()
             }
         } catch (e: Throwable) {
@@ -281,7 +294,7 @@ object GithubApi : MidnightJarSource {
             null
         } ?: return null
         val assets = runBlocking {
-            httpClient.get(URL(assetsUrl)).body<ArrayNode>()
+            httpClient.get(URL(assetsUrl)) { if (githubToken != null) bearerAuth(githubToken) }.body<ArrayNode>()
         }
         return repoName to URL(assets.firstOrNull {
             it["name"].asText()

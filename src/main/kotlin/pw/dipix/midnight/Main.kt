@@ -60,6 +60,7 @@ val downloadHttpClient = HttpClient(CIO) {
 }
 
 val terminal = Terminal()
+val tokens = File("tokens.properties").let { file -> if (file.exists()) Properties().apply { load(file.inputStream()) } else Properties() }
 
 fun main(args: Array<String>): Unit = exitProcess(CommandLine(MidnightMainCommand).execute(*args))
 
@@ -93,6 +94,10 @@ object MidnightBuildCommand : Runnable {
     var specFile: File = File("./spec.midnight.toml")
     override fun run() {
         terminal.println((bold + minecraftCyan)("Starting build process..."))
+        if(tokens["github"] == null) {
+            terminal.println((minecraftYellow + bold)("No GitHub Token supplied. Requests are limited to 60/hour."))
+            terminal.println((minecraftYellow + bold)("You can add your token by creating tokens.properties and adding github=<token> into it."))
+        }
         terminal.println("Using specification located at ${specFile.absolutePath}")
         val spec: MidnightSpecification = jacksonTomlMapper.readValue<MidnightSpecification>(specFile).toResolved()
         terminal.println((bold + minecraftGreen)("Specification parsed."))
@@ -125,13 +130,14 @@ object MidnightBuildCommand : Runnable {
             }
         }
         terminal.println((bold + minecraftGreen)("Jars applied."))
+        listOf("mods", "plugins").map { File(it) }.forEach { it.deleteRecursively() }
         terminal.println((bold + minecraftCyan)("Applying configs..."))
         spec.servers.forEach { (_, server) ->
             server.configDir?.apply { mkdirs() }?.listFiles()?.map { it.relativeTo(server.configDir) }?.forEach {
-                if (server.type == "velocity" && (it.name == "velocity.toml" || it.name == "forwarding.secret")) { // todo: add support for overlays
+                /*if (server.type == "velocity" && (it.name == "velocity.toml" || it.name == "forwarding.secret")) {
                     server.dataDir!!.apply { mkdirs() }.resolve(it)
                         .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
-                } else if (server.isPluginModded) {
+                } else*/ if (server.isPluginModded) {
                     server.dataDir!!.resolve("plugins").apply { mkdirs() }.resolve(it)
                         .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
                 } else if (server.isModded) {
@@ -152,6 +158,14 @@ object MidnightBuildCommand : Runnable {
             }
         }
         terminal.println((bold + minecraftGreen)("Properties applied!"))
+        terminal.println((bold + minecraftCyan)("Applying overlays..."))
+        spec.servers.forEach { (_, server) ->
+            server.overlayDir?.apply { mkdirs() }?.listFiles()?.map { it.relativeTo(server.overlayDir) }?.forEach {
+                server.dataDir!!.apply { mkdirs() }.resolve(it)
+                    .let { targetFile -> server.overlayDir.resolve(it).copyTo(targetFile, overwrite = true) }
+            }
+        }
+        terminal.println((bold + minecraftGreen)("Overlays applied!"))
         terminal.println((bold + minecraftCyan)("Configuring Velocity...")) // todo: support other proxies
         // you are not supposed to have multiple proxies.
         spec.servers.entries.first { it.value.type == "velocity" }.let { (_, server) ->
@@ -171,6 +185,7 @@ object MidnightBuildCommand : Runnable {
             }
             jacksonTomlMapper.writeValue(server.dataDir.resolve("velocity.toml"), velocityToml)
         }
+        terminal.println((bold + minecraftGreen)("Velocity configured!"))
     }
 
 }

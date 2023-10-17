@@ -24,6 +24,9 @@ class URLDownloadable(val url: URL) : Downloadable {
             timeout {
                 requestTimeoutMillis = 1.toDuration(DurationUnit.HOURS).inWholeMilliseconds
             }
+            if(url.host.contains("github") && tokens.getProperty("github") != null) {
+                bearerAuth(tokens.getProperty("github"))
+            }
         }.execute { response ->
 //            println("DEBUG: $url: server responded with content of ${response.contentType()}")
             val channel: ByteReadChannel = response.bodyAsChannel()
