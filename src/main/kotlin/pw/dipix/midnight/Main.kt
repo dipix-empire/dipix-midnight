@@ -71,7 +71,8 @@ fun main(args: Array<String>): Unit = exitProcess(CommandLine(MidnightMainComman
     name = "midnight",
     mixinStandardHelpOptions = true,
     versionProvider = MidnightVersionProvider::class,
-    subcommands = [MidnightBuildCommand::class, MidnightAddCommand::class, MidnightUpgradeCommand::class]
+    subcommands = [MidnightBuildCommand::class, MidnightAddCommand::class, MidnightUpgradeCommand::class],
+    description = ["reproducible minecraft clusters with minimal config"]
 )
 object MidnightMainCommand : Runnable {
 
@@ -90,9 +91,9 @@ object MidnightMainCommand : Runnable {
 }
 
 object MidnightVersionProvider : IVersionProvider {
-    private val versionYaml: ObjectNode = jacksonYamlMapper.readValue(MidnightSpecification::class.java.getResource("/version.yaml")!!)
-    val version get() = versionYaml.get("version")!!.asText()
-    val gitCommit get() = versionYaml.get("git-commit")!!.asText()
+    private val versionYaml: ObjectNode by lazy { jacksonYamlMapper.readValue(MidnightSpecification::class.java.getResource("/version.yaml")!!) }
+    val version by lazy { versionYaml.get("version")!!.asText() }
+    val gitCommit by lazy { versionYaml.get("git-commit")!!.asText() }
 
     override fun getVersion(): Array<String> = arrayOf(
         "${(bold + minecraftYellow)("Di")}${(bold + minecraftCyan)("Pix")} ${
@@ -105,11 +106,11 @@ object MidnightVersionProvider : IVersionProvider {
     )
 }
 
-@Command(name = "build")
+@Command(name = "build", description = ["Build server according to specifications, ready to use."])
 object MidnightBuildCommand : Runnable {
     @Option(
         names = ["-f", "--file"],
-        description = ["The spec.midnight.toml to use for building"],
+        description = ["The spec.midnight.toml to use for building.", "NOTE: build will happen in current directory, NOT in directory of specification."], // FIXME
         defaultValue = "./spec.midnight.toml"
     )
     var specFile: File = File("./spec.midnight.toml")
@@ -222,12 +223,12 @@ object MidnightBuildCommand : Runnable {
 
 }
 
-@Command(name = "add")
+@Command(name = "add", description = ["Add one or more jars."])
 object MidnightAddCommand : Runnable {
-    @Parameters(index = "0")
+    @Parameters(index = "0", description = ["Server for jars to be added"])
     lateinit var targetServer: String
 
-    @Parameters(index = "1..*")
+    @Parameters(index = "1..*", arity = "1..*", description = ["Jar indentifiers. Supports any resolver defined in spec."])
     lateinit var toAdd: List<String>
 
     @Option(
@@ -256,8 +257,8 @@ object MidnightAddCommand : Runnable {
         terminal.println("${(minecraftCyan + bold)("Adding jars:")} ${(minecraftLightPurple + bold)(toAdd.joinToString(", "))}")
         val server = spec.servers[targetServer] ?: throw IllegalArgumentException("Specified server not found")
         val parsedVersions =
-            toAdd.map { jarRegex.matchEntire(it) }.map { it!!.groups["name"]!!.value to it.groups["version"]?.value }
-                .toMap()
+            toAdd.map { jarRegex.matchEntire(it) }
+                .associate { it!!.groups["name"]!!.value to it.groups["version"]?.value }
         val resolved =
             parsedVersions
                 .mapValues {
@@ -311,8 +312,25 @@ object MidnightAddCommand : Runnable {
     }
 }
 
-@Command(name = "upgrade")
+@Command(name = "upgrade", description = ["Upgrade all or some jars."])
 object MidnightUpgradeCommand : Runnable {
+    @Parameters(index = "0", description = ["Server for jars to be added"])
+    lateinit var targetServer: String
+
+    @Parameters(index = "1..*", description = ["Jar indentifiers. Supports any resolver defined in spec."])
+    lateinit var toUpgrade: List<String>
+
+    @Option(
+        names = ["-f", "--file"],
+        description = ["The spec.midnight.toml to use for building"],
+        defaultValue = "./spec.midnight.toml"
+    )
+    var specFile: File = File("./spec.midnight.toml")
+
+    @Option(names = ["--dry"], description = ["Only tells what is going to happen."])
+    var dryRun = false
+    @Option(names = ["--pin"], description = ["Pin stars (*) to specific version"])
+    var pin = false
     override fun run() {
         TODO("Not yet implemented")
     }
