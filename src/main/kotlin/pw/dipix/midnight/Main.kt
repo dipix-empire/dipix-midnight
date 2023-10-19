@@ -103,6 +103,13 @@ object MidnightBuildCommand : Runnable {
         terminal.println((bold + minecraftGreen)("Specification parsed."))
         terminal.println("Detected servers: ${spec.servers.keys.joinToString()}")
         terminal.println("Root server: ${spec.rootServer!!.name!!}")
+        spec.servers.forEach { (name, server) ->
+            terminal.println((minecraftLightPurple + bold)("Server $name:"))
+            terminal.println("Type ${server.type}")
+            terminal.println("Minecraft ${server.minecraftVersion}")
+            terminal.println("Software ${server.softwareVersion}")
+            terminal.println("Build ${server.softwareBuild}")
+        }
         spec.general.dataDir.mkdirs()
         spec.general.configDir.mkdirs()
         terminal.println((bold + minecraftCyan)("Assembling docker-compose.yml..."))

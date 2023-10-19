@@ -79,6 +79,7 @@ class MidnightSpecificationServer(
     val isModded: Boolean get() = listOf("fabric", "forge").contains(type) // TODO: add all supported
     val isPluginServer: Boolean get() = listOf("spigot", "paper").contains(type) // TODO: add all supported
     val isPluginModded: Boolean get() = isPluginServer || isProxy
+    val isVanilla: Boolean get() = !isModded && !isPluginModded && !isProxy
     val defaultPort get() = if (type == "velocity") 25577 else 25565
     val parent: MidnightSpecificationServer?
         get() = specification?.servers?.values?.firstOrNull {
@@ -87,10 +88,27 @@ class MidnightSpecificationServer(
             ) == true
         }
     val resolved: Boolean get() = name != null && specification != null
-    val minecraftVersion: String? get() = if (isProxy) null else if (!isModded) version else version.split(":")[1]
+
+    // mc:soft:build
+    val minecraftVersion: String?
+        get() = when {
+            isProxy -> null
+            isVanilla -> version
+            else -> version.split(":").getOrNull(0)
+        }
 
     /** Server type version (fabric version, velocity version, etc....) */
-    val softwareVersion: String? get() = if (!isProxy && !isModded) null else if (isProxy) version else version.split(":")[0]
+    val softwareVersion: String?
+        get() = when {
+            isProxy -> version.split(":").getOrNull(0)
+            !isVanilla -> version.split(":").getOrNull(1)
+            else -> null
+        }
+
+    /** For some unholy reason people at paper think that build is the version........ */
+    val softwareBuild: String?
+        get() = if (listOf("paper", "velocity").contains(type)) version.split(":")
+            .getOrNull(if (isProxy) 1 else 2) else null
 
     fun toItzgService(mapper: ObjectMapper): ObjectNode = if (isProxy) toItzgProxy(mapper) else toItzgMinecraft(mapper)
 
@@ -113,6 +131,7 @@ class MidnightSpecificationServer(
                 env.put("${type.uppercase()}_VERSION", softwareVersion)
             }
         }
+        if (softwareBuild != null) env.put("${type.uppercase()}_BUILD", softwareBuild)
         return service
     }
 
@@ -128,6 +147,9 @@ class MidnightSpecificationServer(
 //        env.put("EULA", "TRUE")
         env.put("TYPE", type.uppercase())
         if (softwareVersion != null) env.put("${type.uppercase()}_VERSION", softwareVersion)
+        // hooray for consistency
+        // i am not going insane i promise
+        if (softwareBuild != null) env.put("${type.uppercase()}_BUILD_ID", softwareBuild)
         return service
     }
 
