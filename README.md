@@ -5,4 +5,5 @@ reproducible minecraft clusters with minimal config
  - Reproducibility - spinning up config here is the same as spinning up config there (mostly)
  - Simple upgrades
 ## Notes
-Not tested to work under windows, i'm way too lazy to test myself...
+ - Not tested to work under windows, i'm way too lazy to test myself...
+ - We only use Velocity and Fabric. Other proxies/plugin softwares/mod loaders/vanilla are unsupported officially yet. (Some parts of the code do acknowledge the existence of other software)

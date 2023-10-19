@@ -77,7 +77,7 @@ class MidnightSpecificationServer(
     val overlayDir: File? = overlayDir ?: this.specification?.general?.overlayDir?.resolve("$name")
     val isProxy: Boolean get() = listOf("velocity", "waterfall", "bungeecord").contains(type) // TODO: add all supported
     val isModded: Boolean get() = listOf("fabric", "forge").contains(type) // TODO: add all supported
-    val isPluginServer: Boolean get() = listOf("spigot", "paper").contains(type) // TODO: add all supported
+    val isPluginServer: Boolean get() = listOf("bukkit", "spigot", "paper").contains(type) // TODO: add all supported
     val isPluginModded: Boolean get() = isPluginServer || isProxy
     val isVanilla: Boolean get() = !isModded && !isPluginModded && !isProxy
     val defaultPort get() = if (type == "velocity") 25577 else 25565
