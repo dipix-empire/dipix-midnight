@@ -1,6 +1,7 @@
 package pw.dipix.midnight
 
 import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.dataformat.toml.TomlMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper
@@ -20,6 +21,7 @@ import picocli.CommandLine.*
 import java.io.File
 import java.util.*
 import kotlin.system.exitProcess
+
 
 val jacksonKotlinModule = KotlinModule.Builder()
     .withReflectionCacheSize(512)
@@ -60,7 +62,8 @@ val downloadHttpClient = HttpClient(CIO) {
 }
 
 val terminal = Terminal()
-val tokens = File("tokens.properties").let { file -> if (file.exists()) Properties().apply { load(file.inputStream()) } else Properties() }
+val tokens =
+    File("tokens.properties").let { file -> if (file.exists()) Properties().apply { load(file.inputStream()) } else Properties() }
 
 fun main(args: Array<String>): Unit = exitProcess(CommandLine(MidnightMainCommand).execute(*args))
 
@@ -94,7 +97,7 @@ object MidnightBuildCommand : Runnable {
     var specFile: File = File("./spec.midnight.toml")
     override fun run() {
         terminal.println((bold + minecraftCyan)("Starting build process..."))
-        if(tokens["github"] == null) {
+        if (tokens["github"] == null) {
             terminal.println((minecraftYellow + bold)("No GitHub Token supplied. Requests are limited to 60/hour."))
             terminal.println((minecraftYellow + bold)("You can add your token by creating tokens.properties and adding github=<token> into it."))
         }
@@ -113,7 +116,11 @@ object MidnightBuildCommand : Runnable {
         spec.general.dataDir.mkdirs()
         spec.general.configDir.mkdirs()
         terminal.println((bold + minecraftCyan)("Assembling docker-compose.yml..."))
-        File("docker-compose.yml").writeText(jacksonYamlMapper.writeValueAsString(spec.buildDockerCompose()))
+        val specCompose = spec.buildDockerCompose()
+        val overlayCompose =
+            File("./docker-compose.overlay.yml").run { if (exists()) jacksonYamlMapper.readValue<ObjectNode>(this) else null }
+        if (overlayCompose != null) specCompose.mergeWith(overlayCompose)
+        jacksonYamlMapper.writeValue(File("./docker-compose.yml"), specCompose)
         terminal.println((bold + minecraftGreen)("Docker Compose configuration generated."))
         terminal.println((bold + minecraftCyan)("Downloading jars..."))
         val downloadedJars = runBlocking { spec.servers.mapValues { it.value.downloadJars() ?: mapOf() } }
@@ -145,13 +152,13 @@ object MidnightBuildCommand : Runnable {
                     server.dataDir!!.apply { mkdirs() }.resolve(it)
                         .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
                 } else*/ if (server.isPluginModded) {
-                    server.dataDir!!.resolve("plugins").apply { mkdirs() }.resolve(it)
-                        .let { targetFile -> server.configDir.resolve(it).copyRecursively(targetFile, overwrite = true) }
-                } else if (server.isModded) {
-                    // FIXME: where forge keeps them?
-                    server.dataDir!!.resolve("config").apply { mkdirs() }.resolve(it)
-                        .let { targetFile -> server.configDir.resolve(it).copyRecursively(targetFile, overwrite = true) }
-                }
+                server.dataDir!!.resolve("plugins").apply { mkdirs() }.resolve(it)
+                    .let { targetFile -> server.configDir.resolve(it).copyRecursively(targetFile, overwrite = true) }
+            } else if (server.isModded) {
+                // FIXME: where forge keeps them?
+                server.dataDir!!.resolve("config").apply { mkdirs() }.resolve(it)
+                    .let { targetFile -> server.configDir.resolve(it).copyRecursively(targetFile, overwrite = true) }
+            }
             }
         }
         terminal.println((bold + minecraftGreen)("Configs applied!"))
@@ -289,3 +296,23 @@ object MidnightUpgradeCommand : Runnable {
         TODO("Not yet implemented")
     }
 }
+
+fun jacksonMerge(main: JsonNode, other: JsonNode) {
+    val fieldNames: Iterator<String> = other.fieldNames()
+    while (fieldNames.hasNext()) {
+        val fieldName = fieldNames.next()
+        val jsonNode: JsonNode? = main.get(fieldName)
+        // if field exists and is an embedded object
+        if (jsonNode != null && jsonNode.isObject) {
+            jacksonMerge(jsonNode, other.get(fieldName))
+        } else {
+            if (main is ObjectNode) {
+                // Overwrite field
+                val value: JsonNode = other.get(fieldName)
+                main.replace(fieldName, value)
+            }
+        }
+    }
+}
+
+fun ObjectNode.mergeWith(other: ObjectNode) = jacksonMerge(this, other)
