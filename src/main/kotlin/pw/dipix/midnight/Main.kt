@@ -139,11 +139,11 @@ object MidnightBuildCommand : Runnable {
                         .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
                 } else*/ if (server.isPluginModded) {
                     server.dataDir!!.resolve("plugins").apply { mkdirs() }.resolve(it)
-                        .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
+                        .let { targetFile -> server.configDir.resolve(it).copyRecursively(targetFile, overwrite = true) }
                 } else if (server.isModded) {
                     // FIXME: where forge keeps them?
                     server.dataDir!!.resolve("config").apply { mkdirs() }.resolve(it)
-                        .let { targetFile -> server.configDir.resolve(it).copyTo(targetFile, overwrite = true) }
+                        .let { targetFile -> server.configDir.resolve(it).copyRecursively(targetFile, overwrite = true) }
                 }
             }
         }
@@ -162,7 +162,7 @@ object MidnightBuildCommand : Runnable {
         spec.servers.forEach { (_, server) ->
             server.overlayDir?.apply { mkdirs() }?.listFiles()?.map { it.relativeTo(server.overlayDir) }?.forEach {
                 server.dataDir!!.apply { mkdirs() }.resolve(it)
-                    .let { targetFile -> server.overlayDir.resolve(it).copyTo(targetFile, overwrite = true) }
+                    .let { targetFile -> server.overlayDir.resolve(it).copyRecursively(targetFile, overwrite = true) }
             }
         }
         terminal.println((bold + minecraftGreen)("Overlays applied!"))

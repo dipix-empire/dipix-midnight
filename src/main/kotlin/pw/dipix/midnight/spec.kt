@@ -123,7 +123,7 @@ class MidnightSpecificationServer(
         service.put("tty", true)
         service.put("stdin_open", true)
         if (parent == null) service.putArray("ports").add("${specification!!.general.port}:$defaultPort")
-        service.putArray("volumes").add("$dataDir:/data")
+        service.putArray("volumes").add("$dataDir:/server")
         val env = service.putObject("environment")
 //        env.put("EULA", "TRUE")
         env.put("TYPE", type.uppercase())
