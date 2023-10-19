@@ -71,7 +71,7 @@ fun main(args: Array<String>): Unit = exitProcess(CommandLine(MidnightMainComman
     name = "midnight",
     mixinStandardHelpOptions = true,
     versionProvider = MidnightVersionProvider::class,
-    subcommands = [MidnightBuildCommand::class, MidnightAddCommand::class, MidnightUpgradeCommand::class],
+    subcommands = [MidnightBuildCommand::class, MidnightAddCommand::class, MidnightUpgradeCommand::class, HelpCommand::class],
     description = ["reproducible minecraft clusters with minimal config"]
 )
 object MidnightMainCommand : Runnable {
@@ -86,7 +86,7 @@ object MidnightMainCommand : Runnable {
                 )
             }"
         )
-        terminal.println("--help for help")
+        terminal.println("[--]help for help")
     }
 }
 
