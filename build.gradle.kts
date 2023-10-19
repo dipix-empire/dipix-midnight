@@ -7,8 +7,21 @@ plugins {
 
 @Suppress("PropertyName")
 val jackson_version: String by project
+
 @Suppress("PropertyName")
 val ktor_version: String by project
+
+val gitCommit = let {
+    val gitFolder = "$projectDir/.git/"
+    val takeFromHash = 7
+    val head = File(gitFolder + "HEAD").readText().split(":") // .git/HEAD
+    val isCommit = head.size == 1
+
+    return@let if (isCommit) head[0].trim().take(takeFromHash) else {
+        val refHead = File(gitFolder + head[1].trim())
+        refHead.readText().trim().take(takeFromHash)
+    }
+}
 
 group = "pw.dipix.midnight"
 version = "1.0-SNAPSHOT"
@@ -18,8 +31,15 @@ repositories {
 }
 
 dependencies {
-    listOf("jackson-core", "jackson-annotations", "jackson-databind").forEach { implementation("com.fasterxml.jackson.core:$it:$jackson_version") }
-    listOf("toml", "yaml").forEach { implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-$it:$jackson_version") }
+    listOf(
+        "jackson-core",
+        "jackson-annotations",
+        "jackson-databind"
+    ).forEach { implementation("com.fasterxml.jackson.core:$it:$jackson_version") }
+    listOf(
+        "toml",
+        "yaml"
+    ).forEach { implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-$it:$jackson_version") }
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:$jackson_version")
     implementation("info.picocli:picocli:4.7.5")
     implementation("com.github.ajalt.mordant:mordant:2.2.0")
@@ -39,6 +59,12 @@ tasks.test {
 
 kotlin {
     jvmToolchain(17)
+}
+
+tasks.getByName<ProcessResources>("processResources") {
+    filesMatching("version.yaml") {
+        expand("version" to project.version, "gitCommit" to gitCommit)
+    }
 }
 
 kapt {

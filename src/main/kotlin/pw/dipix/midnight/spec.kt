@@ -186,11 +186,11 @@ class MidnightSpecificationServer(
             (if (this.isModded) "mods" else if (this.isPluginModded) "plugins" else null)?.let { File(it) }
         val parsedJars = jars?.mapValues {
             MidnightJarSource.parseAndGetJar(it.key, it.value, this)
-                ?: throw RuntimeException("${it.key} did not resolve.")
+                .apply { if (url == null) throw RuntimeException("${it.key} did not resolve.") }
         }
         val tasks = parsedJars?.map {
-            Downloadable.of(it.value.second).toTask(folder!!.resolve("${it.value.first}.jar")) { finished, total ->
-                if (finished == total) terminal.println((bold + minecraftGreen)("Downloaded ${it.value.first}.jar"))
+            Downloadable.of(it.value.url!!).toTask(folder!!.resolve("${it.value.name}.jar")) { finished, total ->
+                if (finished == total) terminal.println((bold + minecraftGreen)("Downloaded ${it.value.name}.jar"))
             }
         }
 //            println("Tasks: $tasks")
@@ -198,9 +198,19 @@ class MidnightSpecificationServer(
         if (tasks?.isEmpty() == true) {
             terminal.println((bold + minecraftGreen)("No tasks defined."))
         }
-        return parsedJars?.mapValues { folder!!.resolve("${it.value.first}.jar") }
+        return parsedJars?.mapValues { folder!!.resolve("${it.value.name}.jar") }
     }
 }
+
+/** Dont let the name fool you: it might still be unresolved. */
+data class ResolvedJar(
+    /** Remapped name (github converts user/repo to just repo) */
+    val name: String,
+    /** URL for download. If null, jar source did not find jar */
+    val url: URL?,
+    /** Version of jar. Used for version pinning. If null jar source couldn't get version or doesn't support versioning. */
+    val version: String?
+)
 
 interface MidnightJarSource {
 
@@ -209,7 +219,7 @@ interface MidnightJarSource {
         name: String,
         server: MidnightSpecificationServer,
         modVersion: String = "*"
-    ): Pair<String, URL>?
+    ): ResolvedJar
 
     /** If whatever name given is supported by source. Modrinth supports its slugs, github supports user/repo, etc... */
     fun supportsDownload(
@@ -226,7 +236,7 @@ interface MidnightJarSource {
             "local" to LocalJarSource
         )
 
-        fun parseAndGetJar(key: String, value: String, server: MidnightSpecificationServer): Pair<String, URL>? =
+        fun parseAndGetJar(key: String, value: String, server: MidnightSpecificationServer): ResolvedJar =
             resolve(key, server, value)
 
         override fun supportsDownload(
@@ -239,11 +249,11 @@ interface MidnightJarSource {
             name: String,
             server: MidnightSpecificationServer,
             modVersion: String
-        ): Pair<String, URL>? {
+        ): ResolvedJar {
             terminal.println((minecraftLightPurple + bold)("Resolving $name..."))
-            return server.specification!!.general.jarSourceOrder.map { sources[it] }
-                .firstOrNull { it?.supportsDownload(name, server, modVersion) == true }
-                ?.resolve(name, server, modVersion)
+            return server.specification!!.general.jarSourceOrder.map { sources[it]!! }
+                .filter { it.supportsDownload(name, server, modVersion) }
+                .map { it.resolve(name, server, modVersion) }.first { it.url != null }
         }
     }
 }
@@ -257,7 +267,7 @@ object ModrinthApi : MidnightJarSource {
         name: String,
         server: MidnightSpecificationServer,
         modVersion: String
-    ): Pair<String, URL>? {
+    ): ResolvedJar {
         val compatibleVersions =
             runBlocking {
                 val response =
@@ -268,11 +278,12 @@ object ModrinthApi : MidnightJarSource {
                     println("ModrinthApi: ${e.message}")
                     null
                 }
-            }
-//        println(compatibleVersions?.toPrettyString())
-        return compatibleVersions?.firstOrNull { if (modVersion == "*") true else (it["version_number"].asText() == modVersion) }
-            ?.get("files")?.maxByOrNull { it["primary"].asBoolean() }?.get("url")?.asText()?.let { URL(it) }
-            ?.let { name to it }
+            } ?: throw RuntimeException("No compatible versions for $name")
+        if (MidnightMainCommand.printDebug) println(compatibleVersions.toPrettyString())
+        val release =
+            compatibleVersions.firstOrNull { if (modVersion == "*") true else (it["version_number"].asText() == modVersion) }
+        val jar = (release?.get("files") as ArrayNode?)?.maxByOrNull { it["primary"].asBoolean() }
+        return ResolvedJar(name, jar?.get("url")?.asText()?.let { URL(it) }, release?.get("version_number")?.asText())
     }
 
     override fun supportsDownload(
@@ -297,31 +308,36 @@ object GithubApi : MidnightJarSource {
         name: String,
         server: MidnightSpecificationServer,
         modVersion: String
-    ): Pair<String, URL>? {
+    ): ResolvedJar {
         val githubToken = tokens.getProperty("github")
         val user = githubModName.matchEntire(name)?.groups?.get("user")?.value!!
         val repoName = githubModName.matchEntire(name)?.groups?.get("repo")?.value!!
         val tag = githubTagAndFile.matchEntire(modVersion)?.groups?.get("tag")?.value!!
         val file = githubTagAndFile.matchEntire(modVersion)?.groups?.get("file")?.value
-        val assetsUrl = try {
-            runBlocking {
-                httpClient.get(apiUrl(if (tag == "*") "/repos/$user/$repoName/releases/latest" else "/repos/$user/$repoName/releases/tags/$tag")) {
-                    if (githubToken != null) bearerAuth(githubToken)
+        val release =
+            try {
+                runBlocking {
+                    httpClient.get(apiUrl(if (tag == "*") "/repos/$user/$repoName/releases/latest" else "/repos/$user/$repoName/releases/tags/$tag")) {
+                        if (githubToken != null) bearerAuth(githubToken)
+                    }
+                        .apply { if (MidnightMainCommand.printDebug) bodyAsText().run { println(this) } }
+                        .body<ObjectNode>()
                 }
-                    .apply { bodyAsText().run { println(this) } }
-                    .body<ObjectNode>()["assets_url"].asText()
-            }
-        } catch (e: Throwable) {
-            println("GithubApi: ${e.message}")
-            null
-        } ?: return null
+            } catch (e: Throwable) {
+                println("GithubApi: ${e.message}")
+                null
+            } ?: return ResolvedJar(name, null, null)
+        val resolvedTag = release["tag_name"].asText()
+        val assetsUrl = release["assets_url"].asText()
+
         val assets = runBlocking {
             httpClient.get(URL(assetsUrl)) { if (githubToken != null) bearerAuth(githubToken) }.body<ArrayNode>()
         }
-        return repoName to URL(assets.firstOrNull {
+        val asset = assets.firstOrNull {
             it["name"].asText()
                 .let { assetName -> if (file == null) assetName.matches(Regex("""(.*).jar$""")) else assetName == file }
-        }?.get("url")?.asText())
+        }
+        return ResolvedJar(repoName, asset?.get("url")?.asText()?.let { URL(it) }, resolvedTag)
     }
 
     override fun supportsDownload(
@@ -340,7 +356,7 @@ object DirectURLJarSource : MidnightJarSource {
         name: String,
         server: MidnightSpecificationServer,
         modVersion: String
-    ): Pair<String, URL> = name to URL(modVersion)
+    ): ResolvedJar = ResolvedJar(name, URL(modVersion), null)
 
     override fun supportsDownload(
         name: String,
@@ -354,9 +370,9 @@ object DirectURLJarSource : MidnightJarSource {
 }
 
 object LocalJarSource : MidnightJarSource {
-    override fun resolve(name: String, server: MidnightSpecificationServer, modVersion: String): Pair<String, URL>? {
-        terminal.println((minecraftYellow + bold)("Local file resolved for $name (${File(modVersion).absolutePath}). Note that local files break the principle of minimal config, and you should try to find a better way to do this."))
-        return if (File(modVersion).exists()) name to File(modVersion).toURI().toURL() else null
+    override fun resolve(name: String, server: MidnightSpecificationServer, modVersion: String): ResolvedJar {
+        terminal.println((minecraftYellow + bold)("WARNING: Local file resolved for $name (${File(modVersion).absolutePath})"))
+        return ResolvedJar(name, if (File(modVersion).exists()) File(modVersion).toURI().toURL() else null, null)
     }
 
     override fun supportsDownload(name: String, server: MidnightSpecificationServer, modVersion: String): Boolean {

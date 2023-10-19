@@ -70,10 +70,13 @@ fun main(args: Array<String>): Unit = exitProcess(CommandLine(MidnightMainComman
 @Command(
     name = "midnight",
     mixinStandardHelpOptions = true,
-    version = ["SNAPSHOT"],
+    versionProvider = MidnightVersionProvider::class,
     subcommands = [MidnightBuildCommand::class, MidnightAddCommand::class, MidnightUpgradeCommand::class]
 )
 object MidnightMainCommand : Runnable {
+
+    @Option(names = ["--print-debug", "--debug"], description = ["Prints additional debug information"], negatable = true)
+    var printDebug: Boolean = false
     override fun run() {
         terminal.println(
             "${(bold + minecraftYellow)("Di")}${(bold + minecraftCyan)("Pix")} ${
@@ -84,7 +87,22 @@ object MidnightMainCommand : Runnable {
         )
         terminal.println("--help for help")
     }
+}
 
+object MidnightVersionProvider : IVersionProvider {
+    private val versionYaml: ObjectNode = jacksonYamlMapper.readValue(MidnightSpecification::class.java.getResource("/version.yaml")!!)
+    val version get() = versionYaml.get("version")!!.asText()
+    val gitCommit get() = versionYaml.get("git-commit")!!.asText()
+
+    override fun getVersion(): Array<String> = arrayOf(
+        "${(bold + minecraftYellow)("Di")}${(bold + minecraftCyan)("Pix")} ${
+            (bold + minecraftDarkPurple)(
+                "Midnight"
+            )
+        }",
+        "Version: $version",
+        "Commit: $gitCommit"
+    )
 }
 
 @Command(name = "build")
@@ -219,8 +237,11 @@ object MidnightAddCommand : Runnable {
     )
     var specFile: File = File("./spec.midnight.toml")
 
-    @Option(names = ["--dry"])
+    @Option(names = ["--dry"], description = ["Only tells what is going to happen."])
     var dryRun = false
+    @Option(names = ["--pin"], description = ["Pin stars (*) to specific version"])
+    var pin = false
+
     val jarRegex = Regex("""(?<name>[^=]+)(=(?<version>.+))?""")
     val tomlJarsRegex = { server: String ->
         Regex(
@@ -239,17 +260,17 @@ object MidnightAddCommand : Runnable {
                 .toMap()
         val resolved =
             parsedVersions
-                .map {
-                    it.key to MidnightJarSource.parseAndGetJar(
+                .mapValues {
+                    MidnightJarSource.parseAndGetJar(
                         it.key,
                         it.value ?: "*",
                         server
                     )
                 }
-        if (resolved.any { it.second == null }) {
+        if (resolved.any { it.value.url == null }) {
             throw RuntimeException(
                 "Couldn't resolve: ${
-                    resolved.filter { it.second == null }.joinToString(", ") { it.first }
+                    resolved.filter { it.value.url == null }.entries.joinToString(", ") { it.key }
                 }"
             )
         }
@@ -261,10 +282,10 @@ object MidnightAddCommand : Runnable {
                             it.key
                         ) == true
                     }.keys.joinToString(", ")
-                }"
+                }".run { if(pin) "$this\nTrying to pin a star? Use upgrade command instead!" else this }
             )
         }
-        val tomlJars = parsedVersions.entries.joinToString("\n") { "${it.key}=\"${it.value ?: "*"}\"" }
+        val tomlJars = resolved.entries.joinToString("\n") { "${it.key}=\"${if(pin) it.value.version else (parsedVersions[it.key] ?: "*")}\"" }
         terminal.println((minecraftCyan + bold)("Adding following to spec:"))
         terminal.println(tomlJars)
         if (dryRun) {
