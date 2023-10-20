@@ -11,18 +11,6 @@ val jackson_version: String by project
 @Suppress("PropertyName")
 val ktor_version: String by project
 
-val gitCommit = let {
-    val gitFolder = "$projectDir/.git/"
-    val takeFromHash = 7
-    val head = File(gitFolder + "HEAD").readText().split(":") // .git/HEAD
-    val isCommit = head.size == 1
-
-    return@let if (isCommit) head[0].trim().take(takeFromHash) else {
-        val refHead = File(gitFolder + head[1].trim())
-        refHead.readText().trim().take(takeFromHash)
-    }
-}
-
 group = "pw.dipix.midnight"
 version = "1.0-SNAPSHOT"
 
@@ -47,6 +35,7 @@ dependencies {
     implementation("io.ktor:ktor-client-cio:$ktor_version")
     implementation("io.ktor:ktor-client-content-negotiation:$ktor_version")
     implementation("io.ktor:ktor-serialization-jackson:$ktor_version")
+    implementation("org.slf4j:slf4j-nop:2.0.9") // fuck off ktor
 
     testImplementation(kotlin("test"))
 
@@ -62,9 +51,23 @@ kotlin {
 }
 
 tasks.getByName<ProcessResources>("processResources") {
+    // TODO: CACHE!!!!
     filesMatching("version.yaml") {
+        val gitCommit = let {
+            val gitFolder = "$projectDir/.git/"
+            val takeFromHash = 7
+            val head = File(gitFolder + "HEAD").readText().split(":") // .git/HEAD
+            val isCommit = head.size == 1
+            val commit = if (isCommit) head[0].trim().take(takeFromHash) else {
+                val refHead = File(gitFolder + head[1].trim())
+                refHead.readText().trim().take(takeFromHash)
+            }
+            println("Detected commit: $commit")
+            return@let commit
+        }
         expand("version" to project.version, "gitCommit" to gitCommit)
     }
+    outputs.upToDateWhen { false }
 }
 
 kapt {
