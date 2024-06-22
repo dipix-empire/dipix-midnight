@@ -188,7 +188,7 @@ class MidnightSpecificationServer(
             MidnightJarSource.parseAndGetJar(it.key, it.value, this)
                 .apply { if (url == null) throw RuntimeException("${it.key} did not resolve.") }
         }
-        val tasks = parsedJars?.map {
+        val tasks = parsedJars?.filter { !folder!!.resolve("${it.value.name}.jar").exists() }?.map {
             Downloadable.of(it.value.url!!).toTask(folder!!.resolve("${it.value.name}.jar")) { finished, total ->
                 if (finished == total) terminal.println((bold + minecraftGreen)("Downloaded ${it.value.name}.jar"))
             }
