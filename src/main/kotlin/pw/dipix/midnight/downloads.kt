@@ -37,7 +37,7 @@ class URLDownloadable(val url: URL) : Downloadable {
                     tempFile.appendBytes(bytes)
                     progressCallback(
                         channel.totalBytesRead,
-                        response.contentLength()!!
+                        response.contentLength() ?: throw Exception("Could not get content length for $url")
                     )
 //                    delay(1L)
                 }

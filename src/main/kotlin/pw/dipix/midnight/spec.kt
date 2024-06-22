@@ -186,7 +186,7 @@ class MidnightSpecificationServer(
             (if (this.isModded) "mods" else if (this.isPluginModded) "plugins" else null)?.let { File(it) }
         val parsedJars = jars?.mapValues {
             MidnightJarSource.parseAndGetJar(it.key, it.value, this)
-                .apply { if (url == null) throw RuntimeException("${it.key} did not resolve.") }
+                .apply { if (url == null) throw RuntimeException("${it.key} did not resolve.") else println("Resolved ${it.key} to $url") }
         }
         val tasks = parsedJars?.filter { !folder!!.resolve("${it.value.name}.jar").exists() }?.map {
             Downloadable.of(it.value.url!!).toTask(folder!!.resolve("${it.value.name}.jar")) { finished, total ->

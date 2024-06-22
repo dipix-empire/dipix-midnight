@@ -1,6 +1,6 @@
 plugins {
-    kotlin("jvm") version "1.9.0"
-    kotlin("kapt") version "1.9.0"
+    kotlin("jvm") version "1.9.21"
+    kotlin("kapt") version "1.9.21"
     id("com.github.johnrengelman.shadow") version "8.0.0"
     application
 }
